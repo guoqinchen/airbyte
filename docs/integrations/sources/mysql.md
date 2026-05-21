@@ -29,13 +29,13 @@ These steps create a dedicated read-only user for replicating data. Alternativel
 
 The following commands will create a new user:
 
-```roomsql
+```sql
 CREATE USER <user_name> IDENTIFIED BY 'your_password_here';
 ```
 
 Now, provide this user with read-only access to relevant schemas and tables:
 
-```roomsql
+```sql
 GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO <user_name>;
 ```
 
@@ -86,7 +86,7 @@ To fill out the required information:
 
 1. Enter the hostname, port number, and name for your MySQL database.
 2. Enter the username and password you created in [Step 1](#step-1-create-a-dedicated-read-only-mysql-user).
-3. Select an SSL mode. You will most frequently choose `require` or `verify-ca`. Both of these always require encryption. `verify-ca` also requires certificates from your MySQL database. See [here](#ssl-modes) to learn about other SSL modes and SSH tunneling.
+3. Select an SSL mode. You will most frequently choose `required` or `verify_ca`. Both of these always require encryption. `verify_ca` also requires certificates from your MySQL database. See [SSL Modes](#ssl-modes) to learn about other SSL modes and SSH tunneling.
 4. Select `Read Changes using Binary Log (CDC)` from available replication methods.
 
 <!-- env:cloud -->
@@ -106,7 +106,7 @@ Now, click `Set up source` in the Airbyte UI. Airbyte will now test connecting t
 
 ### Change Data Capture \(CDC\)
 
-Airbyte uses logical replication of the [MySQL binlog](https://dev.mysql.com/doc/refman/8.0/en/binary-log.html) to incrementally capture deletes in addition to new and updated records. To learn more how Airbyte implements CDC, refer to [Change Data Capture (CDC)](https://docs.airbyte.com/understanding-airbyte/cdc/). We generally recommend configure your MySQL source with CDC whenever possible, as it provides:
+Airbyte uses logical replication of the [MySQL binlog](https://dev.mysql.com/doc/refman/8.0/en/binary-log.html) to incrementally capture deletes in addition to new and updated records. To learn more how Airbyte implements CDC, refer to [Change Data Capture (CDC)](https://docs.airbyte.com/understanding-airbyte/cdc/). We generally recommend configuring your MySQL source with CDC whenever possible, as it provides:
 
 - A record of deletions, if needed.
 - Scalable replication to large tables (1 TB and more).
@@ -166,6 +166,56 @@ ssh-keygen -t rsa -m PEM -f myuser_rsa
 
 This produces the private key in pem format, and the public key remains in the standard format used by the `authorized_keys` file on your bastion host. The public key should be added to your bastion host to whichever user you want to use with Airbyte. The private key is provided via copy-and-paste to the Airbyte connector configuration screen, so it may log in to the bastion.
 
+## Optional Configuration
+
+<FieldAnchor field="table_filters">
+
+### Table Filters
+
+You can optionally filter which tables are replicated by specifying table filter patterns. Each filter includes a database name and one or more SQL `LIKE` patterns for table names. Only tables matching at least one pattern are included in the sync.
+
+</FieldAnchor>
+
+<FieldAnchor field="checkpoint_target_interval_seconds">
+
+### Checkpoint Target Time Interval
+
+Controls how often (in seconds) the connector creates checkpoints during a sync. The default is 300 seconds (5 minutes). Lowering this value increases checkpoint frequency, which can improve resilience for long-running syncs but may slightly reduce throughput.
+
+</FieldAnchor>
+
+<FieldAnchor field="check_privileges">
+
+### Check Table and Column Access Privileges
+
+When enabled (the default), the connector checks access privileges for each table during schema discovery and excludes inaccessible tables and columns. In large schemas with many tables, this can slow down schema discovery. Disable this option if discovery is timing out and you are confident the configured user has access to all relevant tables.
+
+</FieldAnchor>
+
+<FieldAnchor field="max_db_connections">
+
+### Max Concurrent Queries to Database
+
+Sets the maximum number of concurrent queries to the database. Leave empty to let Airbyte optimize performance automatically.
+
+</FieldAnchor>
+
+<FieldAnchor field="treat_tinyint1_as_integer">
+
+### Treat TINYINT(1) Columns as Integers
+
+MySQL doesn't have a native boolean column type. By convention, `TINYINT(1)` columns are used to store boolean values, and the MySQL JDBC driver reports them as boolean by default. Some databases use `TINYINT(1)` to store small integers (-128 to 127) instead.
+
+This option is disabled by default, which preserves the historical behavior of mapping `TINYINT(1)` columns to boolean.
+
+Enable this option when your `TINYINT(1)` columns hold integer values that you want preserved in the destination. When enabled, the connector emits `TINYINT(1)` columns as integers in both standard and CDC syncs.
+
+:::caution
+Changing this setting on an existing connection alters the schema of affected streams. Reset the affected streams after toggling this option, and update any downstream consumers that expect boolean values.
+:::
+
+</FieldAnchor>
+
 ## Limitations & Troubleshooting
 
 To see connector limitations, or troubleshoot your MySQL connector, see more [in our MySQL troubleshooting guide](/integrations/sources/mysql/mysql-troubleshooting).
@@ -192,6 +242,7 @@ Any database or table encoding combination of charset and collation is supported
 | `mediumint`                               | integer                |                                                                                                                                  |
 | `int`                                     | integer                |                                                                                                                                  |
 | `bigint`                                  | integer                |                                                                                                                                  |
+| `bigint unsigned`                         | integer                |                                                                                                                                  |
 | `float`                                   | number                 |                                                                                                                                  |
 | `double`                                  | number                 |                                                                                                                                  |
 | `decimal`                                 | number                 |                                                                                                                                  |
@@ -227,7 +278,7 @@ Any database or table encoding combination of charset and collation is supported
 | Version     | Date       | Pull Request                                                                                          | Subject                                                                                                                                          |
 |:------------|:-----------|:------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------|
 | 3.52.3      | 2026-05-21 | [78318](https://github.com/airbytehq/airbyte/pull/78318)                                                  | Fix the CDC docs link on the MySQL config page.                                                                                             |
-| 3.52.2      | 2026-05-11 | [77973](https://github.com/airbytehq/airbyte/pull/77973)                                                  | Improve concurrent initial snapshot partitioning for large MySQL tables with `BIGINT UNSIGNED` primary keys.                                     |
+| 3.52.2      | 2026-05-12 | [77973](https://github.com/airbytehq/airbyte/pull/77973)                                                  | Improve concurrent initial snapshot partitioning for large MySQL tables with `BIGINT UNSIGNED` primary keys.                                     |
 | 3.52.1      | 2026-05-05 | [77787](https://github.com/airbytehq/airbyte/pull/77787)                                              | Make the hidden additional properties fields in spec optional. No functional change.                                                             |
 | 3.52.0      | 2026-05-05 | [77772](https://github.com/airbytehq/airbyte/pull/77772)                                              | Add a `treat_tinyint1_as_integer` connector setting that maps TINYINT(1) columns to integers in both snapshot and CDC reads (default unchanged). |
 | 3.51.6      | 2025-04-02 | [76050](https://github.com/airbytehq/airbyte/pull/76050)                                              | Handle sentinel values in GUID primary key columns during partition splitting.                                                                   |
