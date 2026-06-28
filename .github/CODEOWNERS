@@ -66,6 +66,19 @@
 /oss/airbyte-oauth/src/main/kotlin/io/airbyte/oauth/ @airbytehq/dev-api-sources
 
 # -----------------------------------------------------------------------------
+# I18N LOCALE OWNERSHIP
+# -----------------------------------------------------------------------------
+# Per-locale ownership for translated documentation. The team handles below are
+# placeholders that the i18n Owner must confirm before this rule is enforced
+# (CODEOWNERS does not error on unknown teams; it just won't gate reviews).
+# See docs/contributing-to-airbyte/i18n-team.md for the RACI matrix this rule
+# is meant to enforce.
+/docusaurus/i18n/zh-Hans/  @airbyte/i18n-owners @airbyte/i18n-zh-Hans-lead
+/docusaurus/i18n/ja/       @airbyte/i18n-owners @airbyte/i18n-ja-lead
+/docusaurus/i18n/pt-BR/    @airbyte/i18n-owners @airbyte/i18n-pt-BR-lead
+/docs/contributing-to-airbyte/i18n-*.md  @airbyte/i18n-owners
+
+# -----------------------------------------------------------------------------
 # NO OWNERSHIP - Markdown files
 # -----------------------------------------------------------------------------
 # Documentation changes don't require team review. These rules override the
@@ -74,6 +87,9 @@
 /airbyte-integrations/connectors/source-*/**/*.md
 /airbyte-integrations/connectors/destination-*/**/*.md
 /docs/**/*.md
+# NOTE: /docusaurus/i18n/** is intentionally NOT in the "no ownership" block —
+# those paths are owned by the per-locale teams declared in the I18N section
+# above and require Locale Lead review before merge.
 
 # -----------------------------------------------------------------------------
 # BREAKING CHANGES

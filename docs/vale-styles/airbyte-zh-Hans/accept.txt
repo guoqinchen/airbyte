@@ -1,0 +1,143 @@
+# Vale Accept List - 简体中文专有名词白名单
+# 这些词不应被 Vale 标记为错误(品牌名、技术专有名)
+# 详见 docs/contributing-to-airbyte/i18n-glossary.md
+
+# 品牌名
+Airbyte
+Stripe
+Postgres
+PostgreSQL
+Snowflake
+BigQuery
+Databricks
+dbt
+Airbyte Agents
+Airbyte Cloud
+Airbyte Enterprise
+PyAirbyte
+GitHub
+Vercel
+
+# 技术专有名(不译)
+API
+SDK
+CLI
+UI
+HTTP
+HTTPS
+SSL
+TLS
+YAML
+JSON
+SQL
+CSV
+XML
+AWS
+GCP
+Azure
+Docker
+Kubernetes
+Helm
+Jira
+Slack
+GitLab
+AI
+ML
+NLP
+IDE
+MCP
+RAG
+OAuth
+JWT
+SAML
+SSO
+SCIM
+REST
+GraphQL
+gRPC
+JSON Schema
+Markdown
+MDX
+ELT
+ETL
+DBT
+SSR
+SSG
+CDN
+DNS
+IPv4
+IPv6
+TCP
+UDP
+
+# 产品组件
+Source
+Destination
+Connector
+Stream
+Sync
+Connection
+Catalog
+Field
+Record
+Full Refresh
+Incremental
+Append
+Overwrite
+Cursor
+Primary Key
+CDC
+WebSocket
+Webhook
+Worker
+Worker queue
+
+# 算法 / 协议 / 框架
+Debezium
+Log4j
+Micronaut
+Picocli
+JDBC
+JVM
+OpenJDK
+Kotlin
+Java
+Python
+Gradle
+Maven
+npm
+pnpm
+node
+React
+Docusaurus
+Vercel
+TypeScript
+
+# 数据存储
+S3
+GCS
+Azure Blob
+RDS
+DynamoDB
+Cosmos DB
+Redshift
+BigQuery
+Data Lake
+Data Warehouse
+
+# 章节锚点(英文目录结构)
+## Setup
+## Configuration
+## Authentication
+## Getting Started
+## Quick Start
+## Reference
+## Changelog
+
+# 占位符与示例
+example
+test
+production
+development
+localhost
+0.0.0.0

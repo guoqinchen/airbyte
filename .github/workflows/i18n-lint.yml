@@ -1,0 +1,392 @@
+# i18n Lint Workflow
+#
+# 翻译质量检查:术语一致性、占位符完整性、内部链接有效、语言纯净度。
+# 触发:`pull_request` 中修改 docusaurus/i18n/** 路径
+
+name: i18n Lint
+
+on:
+  pull_request:
+    paths:
+      - "docusaurus/i18n/**"
+      - "docs/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  changed-locales:
+    name: Detect changed locales
+    runs-on: ubuntu-24.04
+    outputs:
+      locales: ${{ steps.detect.outputs.locales }}
+      has-changes: ${{ steps.detect.outputs.has-changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed locales
+        id: detect
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" -- 'docusaurus/i18n/' | awk -F/ '/^docusaurus\/i18n\/[^\/]+\// {print $3}' | sort -u)
+
+          if [[ -z "${CHANGED}" ]]; then
+            echo "No locale directories changed"
+            echo "has-changes=false" | tee -a $GITHUB_OUTPUT
+            echo "locales=[]" | tee -a $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          JSON=$(echo "${CHANGED}" | jq -R -s -c 'split("\n")[:-1]')
+          echo "locales=${JSON}" | tee -a $GITHUB_OUTPUT
+          echo "has-changes=true" | tee -a $GITHUB_OUTPUT
+
+  lint-locale:
+    name: Lint ${{ matrix.locale }}
+    needs: changed-locales
+    if: needs.changed-locales.outputs.has-changes == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        locale: ${{ fromJson(needs.changed-locales.outputs.locales) }}
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+
+      - name: Install Python deps
+        run: |
+          uv tool install poethepoet
+          uv tool install vale
+          uv tool install linkinator
+
+      - name: Validate code.json structure
+        working-directory: docusaurus/i18n/${{ matrix.locale }}
+        run: |
+          set -euo pipefail
+          for f in *.json; do
+            if [[ ! -s "${f}" ]]; then
+              echo "::warning::${f} is empty; auto-fill from source."
+              continue
+            fi
+            if ! python3 -c "import json; json.load(open('${f}'))"; then
+              echo "::error::${f} contains invalid JSON"
+              exit 1
+            fi
+          done
+          echo "✓ code.json files valid for locale ${{ matrix.locale }}"
+
+      - name: Check placeholders preservation
+        working-directory: docusaurus/i18n/${{ matrix.locale }}
+        run: |
+          set -euo pipefail
+          # 对照英文版检查每个翻译文件中的 {var} 占位符与英文版一致
+          # 列出所有未匹配占位符的文件
+          uv run --with click python3 - <<'PY'
+          import json, re, os, sys
+          from pathlib import Path
+          locale = os.environ.get("LOCALE")
+          if not locale:
+              sys.exit("LOCALE not set")
+          en_dir = Path("docusaurus/i18n/en")
+          loc_dir = Path(f"docusaurus/i18n/{locale}")
+          if not en_dir.exists():
+              sys.exit(0)
+          if not loc_dir.exists():
+              sys.exit(0)
+          placeholder_re = re.compile(r"\{\w+[,}]")
+          errors = []
+          for en_file in en_dir.glob("*.json"):
+              loc_file = loc_dir / en_file.name
+              if not loc_file.exists():
+                  continue
+              try:
+                  en_data = json.loads(en_file.read_text(encoding="utf-8"))
+                  loc_data = json.loads(loc_file.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as e:
+                  errors.append(f"{loc_file}: invalid JSON ({e})")
+                  continue
+              def walk(en_obj, loc_obj, path=""):
+                  if isinstance(en_obj, dict):
+                      if not isinstance(loc_obj, dict):
+                          errors.append(f"{loc_file}: type mismatch at {path}")
+                          return
+                      for k, v in en_obj.items():
+                          if k.startswith("_"): continue
+                          walk(v, loc_obj.get(k, {}), f"{path}.{k}")
+                  elif isinstance(en_obj, str):
+                      if not isinstance(loc_obj, str):
+                          errors.append(f"{loc_file}: type mismatch at {path}")
+                          return
+                      en_ph = sorted(placeholder_re.findall(en_obj))
+                      loc_ph = sorted(placeholder_re.findall(loc_obj))
+                      if en_ph != loc_ph:
+                          errors.append(f"{loc_file}: placeholder mismatch at {path}: en={en_ph} loc={loc_ph}")
+              walk(en_data, loc_data)
+          if errors:
+              for e in errors: print(f"::error::{e}")
+              sys.exit(1)
+          print("✓ All placeholders match.")
+          PY
+        env:
+          LOCALE: ${{ matrix.locale }}
+
+      - name: Check terminology compliance
+        working-directory: docusaurus/i18n/${{ matrix.locale }}
+        run: |
+          set -euo pipefail
+          # 术语一致性:从 docs/contributing-to-airbyte/i18n-glossary.md 解析英文术语
+          # 及其在目标 locale 的官方译法,扫翻译文档中出现的英文术语,确保没有
+          # 翻译成 glossary 之外的中文/日文/葡语变体。
+          uv run python3 - <<'PY'
+          import os, re, sys
+          from pathlib import Path
+          locale = os.environ["LOCALE"]
+          if locale in ("en", "", None):
+              sys.exit(0)
+          glossary_path = Path("docs/contributing-to-airbyte/i18n-glossary.md")
+          if not glossary_path.exists():
+              print(f"::warning::Glossary not found at {glossary_path}; skipping.")
+              sys.exit(0)
+          # 解析所有 markdown 表格行: | English | zh-Hans | ja | pt-BR | [备注] |
+          term_pairs: dict[str, str] = {}
+          for line in glossary_path.read_text(encoding="utf-8").splitlines():
+              m = re.match(r"\|\s*([^|`]+?)\s*\|\s*([^|`]+?)\s*\|\s*([^|`]+?)\s*\|\s*([^|`]+?)\s*\|", line)
+              if not m:
+                  continue
+              en, zh, ja, pt = (c.strip() for c in m.groups())
+              if en.lower() in {"english", "source", "destination"} and not en[0].isupper():
+                  continue
+              # 提取括号内的小名 (例如 "Deduped (history)" -> "Deduped history")
+              en_norm = re.sub(r"\s+", " ", en.replace("(", "").replace(")", "").strip())
+              localized = {"zh-Hans": zh, "ja": ja, "pt-BR": pt}.get(locale)
+              if localized and en_norm:
+                  term_pairs[en_norm] = localized
+          if not term_pairs:
+              print("::warning::No terms parsed from glossary; skipping.")
+              sys.exit(0)
+          # 扫翻译 markdown
+          doc_dir = Path(f"docusaurus/i18n/{locale}/docusaurus-plugin-content-docs/current")
+          if not doc_dir.exists():
+              sys.exit(0)
+          warnings: list[str] = []
+          for md in doc_dir.rglob("*.md*"):
+              text = md.read_text(encoding="utf-8")
+              text = re.sub(r"^---\n.*?\n---", "", text, flags=re.DOTALL)
+              text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+              text = re.sub(r"`[^`]+`", "", text)
+              text = re.sub(r"<[^>]+>", "", text)
+              lower = text.lower()
+              for en, expected in term_pairs.items():
+                  if en.lower() in lower and expected not in text:
+                      warnings.append(f"{md}: glossary term '{en}' appears but expected '{expected}' not found")
+          if warnings:
+              for w in warnings:
+                  print(f"::warning::{w}")
+              print(f"::error::{len(warnings)} glossary deviations in {locale}")
+              sys.exit(1)
+          print(f"✓ Terminology compliance OK for {locale} ({len(term_pairs)} terms checked)")
+          PY
+        env:
+          LOCALE: ${{ matrix.locale }}
+
+      - name: Check internal links
+        working-directory: docusaurus/i18n/${{ matrix.locale }}
+        run: |
+          set -euo pipefail
+          # 内部链接检查:提取翻译文档中的相对 .md(x) 链接,验证对应的英文源文件
+          # 存在(以英文源为单一真相)。品牌/外链/锚点跳过。
+          uv run python3 - <<'PY'
+          import os, re, sys
+          from pathlib import Path
+          locale = os.environ["LOCALE"]
+          if locale in ("en", "", None):
+              sys.exit(0)
+          doc_dir = Path(f"docusaurus/i18n/{locale}/docusaurus-plugin-content-docs/current")
+          if not doc_dir.exists():
+              sys.exit(0)
+          # 候选英文源根目录(翻译文档里相对路径都应该能映射到这些根)
+          source_roots = [
+              Path("docs"),
+              Path("docusaurus/platform_versioned_docs/version-1.7"),
+              Path("docusaurus/platform_versioned_docs/version-1.6"),
+          ]
+          link_re = re.compile(r"\[[^\]]+\]\(([^)]+\.mdx?)(?:#[^)]*)?\)")
+          broken: list[str] = []
+          for md in doc_dir.rglob("*.md*"):
+              text = md.read_text(encoding="utf-8")
+              for href in link_re.findall(text):
+                  if href.startswith(("http://", "https://", "mailto:", "/")):
+                      continue
+                  # 去掉 query / anchor / 同目录前缀
+                  target_rel = href.split("#", 1)[0].split("?", 1)[0]
+                  if not target_rel:
+                      continue
+                  target_abs = (md.parent / target_rel).resolve()
+                  # 尝试在每个 source_roots 下找对应英文源
+                  found = False
+                  for root in source_roots:
+                      try:
+                          rel = target_abs.relative_to(root.resolve())
+                      except ValueError:
+                          continue
+                      candidate = root / rel
+                      if candidate.exists():
+                          found = True
+                          break
+                  if not found:
+                      broken.append(f"{md}: -> {href}")
+          if broken:
+              for b in broken[:50]:
+                  print(f"::warning::{b}")
+              if len(broken) > 50:
+                  print(f"::warning::... and {len(broken) - 50} more")
+              print(f"::error::{len(broken)} broken internal links in {locale}")
+              sys.exit(1)
+          print(f"✓ Internal links OK for {locale}")
+          PY
+        env:
+          LOCALE: ${{ matrix.locale }}
+
+      - name: Check English residue ratio
+        working-directory: docusaurus/i18n/${{ matrix.locale }}
+        run: |
+          set -euo pipefail
+          uv run --with click python3 - <<'PY'
+          """检查翻译文档中英文字符占比,过高的文档可能未翻译完整。"""
+          import os, re, sys
+          from pathlib import Path
+          locale = os.environ.get("LOCALE")
+          if locale in ("en", None, ""):
+              sys.exit(0)
+          threshold = {
+              "zh-Hans": 0.15,
+              "ja": 0.20,
+              "pt-BR": 0.15,
+          }.get(locale, 0.20)
+          doc_dir = Path(f"docusaurus/i18n/{locale}/docusaurus-plugin-content-docs/current")
+          if not doc_dir.exists():
+              sys.exit(0)
+          violations = []
+          for md in doc_dir.rglob("*.md*"):
+              text = md.read_text(encoding="utf-8")
+              # 移除 front matter、代码块、链接、HTML
+              text = re.sub(r"^---\n.*?\n---", "", text, flags=re.DOTALL)
+              text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+              text = re.sub(r"`[^`]+`", "", text)
+              text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+              text = re.sub(r"<[^>]+>", "", text)
+              # 计算纯英文段落
+              en_chars = len(re.findall(r"[a-zA-Z]", text))
+              total_chars = len(re.sub(r"\s", "", text))
+              if total_chars == 0:
+                  continue
+              ratio = en_chars / total_chars
+              if ratio > threshold:
+                  violations.append((str(md), ratio))
+          for path, ratio in violations:
+              print(f"::warning::{path}: English residue ratio {ratio:.2%} > {threshold:.0%}")
+          PY
+
+      - name: Vale style check
+        working-directory: docusaurus
+        env:
+          # 把 matrix.locale 通过 env 传入脚本,避免在 shell 字符串里直接展开
+          # ${{ matrix.locale }}。值是 git diff 路径里的目录名,在 passed-locales
+          # 列表里已经被 changed-locales 任务约束,但仍校验一遍以防万一。
+          LOCALE: ${{ matrix.locale }}
+          ALLOWED_LOCALES: 'en zh-Hans ja pt-BR'
+        run: |
+          set -euo pipefail
+          case " $ALLOWED_LOCALES " in
+            *" $LOCALE "*) ;;
+            *)
+              echo "::error::Refusing to lint unknown locale: $LOCALE"
+              exit 1
+              ;;
+          esac
+          # Vale 在 docker 镜像中运行,避免安装多个二进制
+          # 将仓库根挂载到 /airbyte,然后使用真实的 vale.ini 和 vale-styles 目录;
+          # 因为 docusaurus/vale.ini 用的是相对路径 StylesPath = ../docs/vale-styles,
+          # 必须把仓库根作为父目录才能让 Vale 找到 styles。
+          # 退出码处理:vale 的非零退出码会被识别为 ::error::(会阻断 merge),
+          # 而全局 Google / write-good 等风格建议则降级为 ::warning:: 不阻断。
+          target="/airbyte/docusaurus/i18n/$LOCALE/docusaurus-plugin-content-docs/current"
+          log="/tmp/vale-$LOCALE.log"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/airbyte" \
+            -w /airbyte/docusaurus \
+            jdkato/vale:latest \
+            --config=/airbyte/docusaurus/vale.ini \
+            --styles=/airbyte/docs/vale-styles \
+            --minAlertLevel=warning \
+            "$target" \
+            2>&1 | tee "$log"
+          exit_code=${PIPESTATUS[0]}
+          # 区分 per-locale 包违规(阻断) vs 全局风格建议(警告)。
+          # per-locale 包前缀: airbyte-zh-Hans / airbyte-ja / airbyte-pt-BR
+          locale_pack_re='docusaurus/i18n/[^/]+/docusaurus-plugin-content-docs/current/[^:]+:[0-9]+:[0-9]+:\s*(airbyte-zh-Hans|airbyte-ja|airbyte-pt-BR)\.'
+          if grep -Eq "$locale_pack_re" "$log"; then
+            echo "::error::Locale-specific Vale pack violations found in $LOCALE"
+            grep -E "$locale_pack_re" "$log" | head -50
+            exit 1
+          fi
+          if [[ $exit_code -ne 0 ]]; then
+            echo "::warning::Vale found non-blocking style issues in $LOCALE"
+          else
+            echo "✓ Vale OK for $LOCALE"
+          fi
+
+  aggregate:
+    name: Aggregate Lint Results
+    if: always()
+    needs: [changed-locales, lint-locale]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Evaluate
+        id: evaluate
+        run: |
+          if [[ "${{ needs.changed-locales.outputs.has-changes }}" != "true" ]]; then
+            echo "result=skipped"
+          elif [[ "${{ needs.lint-locale.result }}" == "success" ]]; then
+            echo "result=success"
+          else
+            echo "result=failure"
+          fi
+
+      - name: Authenticate as GitHub App
+        if: needs.changed-locales.outputs.has-changes == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Report status
+        if: needs.changed-locales.outputs.has-changes == 'true'
+        uses: LouisBrunner/checks-action@dfcbcf801bff1ea7f1414824fc28f2cd697b35da # v3.0.0
+        with:
+          name: "i18n Lint"
+          sha: ${{ github.event.pull_request.head.sha }}
+          status: completed
+          conclusion: ${{ steps.evaluate.outputs.result }}
+          token: ${{ steps.get-app-token.outputs.token }}

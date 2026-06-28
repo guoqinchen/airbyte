@@ -1,0 +1,141 @@
+# i18n Stale Workflow
+#
+# 标记翻译文件超过 30 天未更新的 PR/Issue。
+# 提醒翻译团队补齐落后翻译。
+
+name: i18n Stale
+
+on:
+  schedule:
+    # 每周一 UTC 09:00
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale-locales:
+    name: Identify stale translations
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect stale translations
+        id: detect
+        run: |
+          set -euo pipefail
+          uv run --with click python3 - <<'PY'
+          import os, subprocess, json, sys
+          from pathlib import Path
+          from datetime import datetime, timezone, timedelta
+
+          cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+          stale = []
+
+          en_dir = Path("docs")
+          for locale in ["zh-Hans", "ja", "pt-BR"]:
+              loc_dir = Path(f"docusaurus/i18n/{locale}/docusaurus-plugin-content-docs/current")
+              if not loc_dir.exists():
+                  continue
+              for en_file in en_dir.rglob("*.md*"):
+                  rel = en_file.relative_to(en_dir)
+                  loc_file = loc_dir / rel
+                  # 取源文件最后提交时间
+                  en_ts = subprocess.run(
+                      ["git", "log", "-1", "--format=%cI", str(en_file)],
+                      capture_output=True, text=True
+                  ).stdout.strip()
+                  if not en_ts:
+                      continue
+                  en_dt = datetime.fromisoformat(en_ts)
+                  if loc_file.exists():
+                      loc_ts = subprocess.run(
+                          ["git", "log", "-1", "--format=%cI", str(loc_file)],
+                          capture_output=True, text=True
+                      ).stdout.strip()
+                      if loc_ts:
+                          loc_dt = datetime.fromisoformat(loc_ts)
+                          # 仅当英文版比翻译版新且差异超过 30 天
+                          if en_dt > loc_dt and (en_dt - loc_dt) > timedelta(days=30):
+                              stale.append({
+                                  "locale": locale,
+                                  "file": str(rel),
+                                  "en_date": en_dt.isoformat(),
+                                  "loc_date": loc_dt.isoformat(),
+                                  "days_behind": (en_dt - loc_dt).days,
+                              })
+                  else:
+                      # 翻译文件不存在
+                      if en_dt < cutoff:
+                          stale.append({
+                              "locale": locale,
+                              "file": str(rel),
+                              "en_date": en_dt.isoformat(),
+                              "loc_date": None,
+                              "days_behind": (datetime.now(timezone.utc) - en_dt).days,
+                          })
+
+          Path("/tmp/stale.json").write_text(json.dumps(stale, indent=2))
+          print(f"Stale translations: {len(stale)}")
+          print(json.dumps(stale[:5], indent=2))
+          PY
+
+      - name: Open stale tracking issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STALE_JSON: ${{ steps.detect.outputs.stale }}
+        run: |
+          set -euo pipefail
+          COUNT=$(jq 'length' /tmp/stale.json)
+          if [[ "${COUNT}" == "0" ]]; then
+            echo "No stale translations found."
+            exit 0
+          fi
+
+          # 创建一个 issue 汇总
+          TABLE=$(jq -r '.[] | "| \(.locale) | \(.file) | \(.days_behind) |"' /tmp/stale.json | head -50)
+          BODY="## Stale translations (>30 days behind)
+
+          Total: ${COUNT}
+
+          | Locale | File | Days Behind |
+          |---|---|---|
+          ${TABLE}
+
+          See \`docs/contributing-to-airbyte/i18n-team.md\` for who can update these.
+          "
+
+          # 检查是否已存在未关闭的 stale issue
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label "area/i18n,type/stale" \
+            --state open --json number --jq '.[0].number // empty' || true)
+
+          if [[ -n "${EXISTING}" ]]; then
+            echo "Updating existing issue #${EXISTING}"
+            gh issue edit "${EXISTING}" --body "${BODY}" --repo "$GITHUB_REPOSITORY"
+          else
+            echo "Creating new stale issue"
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "🌐 Stale i18n translations (>30 days behind) - $(date -u +%Y-%m-%d)" \
+              --body "${BODY}" \
+              --label "area/i18n,type/stale"
+          fi
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@70cd7be8e40a46e8b0eced40b0de447bdb42f68e # v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.I18N_SYNC_SLACK_WEBHOOK }}
+        with:
+          payload: |
+            {
+              "channel": "#i18n-updates",
+              "username": "Airbyte i18n Bot",
+              "text": "⏰ Weekly i18n stale check: see <https://github.com/${{ github.repository }}/issues?q=is%3Aissue+label%3Aarea%2Fi18n+is%3Aopen+label%3Atype%2Fstale|open issues>"
+            }

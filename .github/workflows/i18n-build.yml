@@ -1,0 +1,127 @@
+# i18n Build Workflow
+#
+# 当 `docusaurus/i18n/**` 变更时,构建多语言文档预览。
+# 触发:`pull_request` 中修改 docusaurus/i18n/** 路径
+
+name: i18n Build
+
+on:
+  pull_request:
+    paths:
+      - "docusaurus/i18n/**"
+      - "docusaurus/docusaurus.config.ts"
+      - "docusaurus/sidebar-*.js"
+      - "docusaurus/src/components/**"
+      - "docs/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  detect-changes:
+    name: Detect i18n Changes
+    runs-on: ubuntu-24.04
+    outputs:
+      has-i18n-changes: ${{ steps.detect.outputs.has-i18n }}
+    steps:
+      - name: Detect changes
+        id: detect
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            has-i18n:
+              - 'docusaurus/i18n/**'
+              - 'docusaurus/docusaurus.config.ts'
+              - 'docusaurus/sidebar-*.js'
+
+  build-multilingual-preview:
+    name: Build Multilingual Preview
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-i18n-changes == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        locale: [en, zh-Hans, ja, pt-BR]
+      max-parallel: 2
+      fail-fast: false
+    name: Build ${{ matrix.locale }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set Up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: "docusaurus/.nvmrc"
+
+      - name: Set Up pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 10.12.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+
+      - name: Install Poe
+        run: uv tool install poethepoet
+
+      - name: Build docs for locale
+        working-directory: docusaurus
+        run: |
+          pnpm install --ignore-scripts
+          pnpm build --locale ${{ matrix.locale }}
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docs-build-${{ matrix.locale }}
+          path: docusaurus/build/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  report:
+    name: Aggregate i18n Build Status
+    if: always()
+    needs: [detect-changes, build-multilingual-preview]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Evaluate
+        id: evaluate
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.has-i18n-changes }}" != "true" ]]; then
+            echo "result=skipped" | tee -a $GITHUB_OUTPUT
+          elif [[ "${{ needs.build-multilingual-preview.result }}" == "success" ]]; then
+            echo "result=success" | tee -a $GITHUB_OUTPUT
+          else
+            echo "result=failure" | tee -a $GITHUB_OUTPUT
+          fi
+
+      - name: Authenticate as GitHub App
+        if: needs.detect-changes.outputs.has-i18n-changes == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Report status
+        if: steps.evaluate.outputs.result != 'skipped'
+        uses: LouisBrunner/checks-action@dfcbcf801bff1ea7f1414824fc28f2cd697b35da # v3.0.0
+        with:
+          name: "i18n Docs Build"
+          sha: ${{ github.event.pull_request.head.sha }}
+          status: completed
+          conclusion: ${{ steps.evaluate.outputs.result }}
+          token: ${{ steps.get-app-token.outputs.token }}

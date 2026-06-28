@@ -100,6 +100,9 @@ jobs:
                   action: 'redeploy',
                   source: 'github-actions',
                   workflow: 'docs-vercel-production-rebuild',
+                  // i18n locales deployed on this rebuild; rebuilds redeploy all
+                  // locales produced by `pnpm build` (en, zh-Hans, ja, pt-BR).
+                  i18n_locales: ['en', 'zh-Hans', 'ja', 'pt-BR'],
                 },
               }),
             });

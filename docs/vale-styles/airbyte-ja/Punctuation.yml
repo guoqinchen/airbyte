@@ -1,0 +1,12 @@
+# Vale Style: airbyte-ja 句読点ルール
+# 日本語の句読点に関するルール
+
+extends: existence
+message: "日本語の文末には「。」を使用してください"
+level: error
+nonword: true
+tokens:
+  - '\.$'
+  - '\,$'
+
+# Note: Vale の日本語サポートは限定的なため、最終レビューは人手で行います。

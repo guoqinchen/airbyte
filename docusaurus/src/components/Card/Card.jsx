@@ -15,6 +15,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { faPython } from "@fortawesome/free-brands-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { translate } from "@docusaurus/Translate";
 import styles from "./Card.module.css";
 import { CloudIcon, EnterpriseIcon, OssIcon } from "./CustomIcons";
 
@@ -63,6 +64,14 @@ const Icon = ({ name }) => {
   return null;
 };
 
+/**
+ * CardWithIcon renders an icon, title, description and optional CTA.
+ * All visible text props (title, description, ctaText) are passed through
+ * Docusaurus `translate()` so the same component renders the right locale
+ * when invoked from MDX pages. Translation entries land in
+ * `docusaurus/i18n/<locale>/code.json` under `card.<title|description|ctaText>`
+ * (auto-derived from the source string by `pnpm write-translations`).
+ */
 export const CardWithIcon = ({
   title,
   description,
@@ -71,6 +80,18 @@ export const CardWithIcon = ({
   ctaVariant = "primary",
   icon,
 }) => {
+  const { message: translatedTitle } = translate({
+    message: title,
+    id: `card.title.${title}`,
+  });
+  const { message: translatedDescription } = translate({
+    message: description,
+    id: `card.description.${description}`,
+  });
+  const { message: translatedCtaText } = ctaText
+    ? translate({ message: ctaText, id: `card.cta.${ctaText}` })
+    : { message: ctaText };
+
   return (
     <div className={styles.card}>
       <div className={styles.cardContent}>
@@ -79,12 +100,12 @@ export const CardWithIcon = ({
             <Icon name={icon} />
           </div>
         )}
-        <h2>{title}</h2>
-        <p>{description}</p>
+        <h2>{translatedTitle}</h2>
+        <p>{translatedDescription}</p>
       </div>
-      {ctaText && (
+      {translatedCtaText && (
         <Link href={ctaLink} variant={ctaVariant}>
-          {ctaText}
+          {translatedCtaText}
         </Link>
       )}
     </div>

@@ -28,10 +28,15 @@ jobs:
       changed: ${{ steps.detect-changes.outputs.docs }}
 
   build-docs:
-    name: Build Airbyte Docs
+    name: Build Airbyte Docs (${{ matrix.locale }})
     runs-on: ubuntu-24.04
     needs: detect-changes
     if: needs.detect-changes.outputs.changed == 'true'
+    strategy:
+      matrix:
+        locale: [en, zh-Hans, ja, pt-BR]
+      max-parallel: 2
+      fail-fast: false
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -84,7 +89,8 @@ jobs:
       - name: Build Docs
         if: steps.check-skip.outputs.skip-build != 'true'
         run: |
-          poe docs-build
+          # Build for locale ${{ matrix.locale }}; default is en
+          poe docs-build -- --locale ${{ matrix.locale }}
 
   vercel-preview:
     name: Vercel Preview

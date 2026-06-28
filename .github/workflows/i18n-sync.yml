@@ -1,0 +1,149 @@
+# i18n Sync Workflow
+#
+# 每小时从 Weblate 拉取翻译更新并提交 PR。
+# Weblate 配置:`.weblate/README.md`
+# 项目文档:`docusaurus/i18n/README.md`
+
+name: i18n Sync
+
+on:
+  schedule:
+    # 每小时第 30 分钟执行
+    - cron: "30 * * * *"
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Weblate component slug (e.g. docs-platform). Leave empty for all."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-from-weblate:
+    name: Sync translations from Weblate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Airbyte
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+
+      - name: Install Ops CLI
+        run: uv tool install airbyte-internal-ops
+
+      - name: Trigger Weblate commit and push
+        env:
+          WEBLATE_URL: ${{ secrets.WEBLATE_URL }}
+          WEBLATE_API_TOKEN: ${{ secrets.WEBLATE_API_TOKEN }}
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${WEBLATE_URL}" || -z "${WEBLATE_API_TOKEN}" ]]; then
+            echo "::warning::WEBLATE_URL or WEBLATE_API_TOKEN not set; skipping."
+            exit 0
+          fi
+
+          # Trigger Weblate to commit & push pending translations
+          # https://docs.weblate.org/en/latest/api.html
+          COMPONENTS=(
+            "docs-platform"
+            "docs-ai-agents"
+            "docs-developers"
+            "docs-ui"
+            "docs-integrations-overview"
+          )
+
+          if [[ -n "${COMPONENT}" ]]; then
+            COMPONENTS=("${COMPONENT}")
+          fi
+
+          for c in "${COMPONENTS[@]}"; do
+            echo "Syncing component: ${c}"
+            curl -fsS -X POST \
+              -H "Authorization: Token ${WEBLATE_API_TOKEN}" \
+              "${WEBLATE_URL}/api/components/airbyte-docs/${c}/repository/" \
+              -H "Content-Type: application/json" \
+              -d '{"operation": "commit"}' || echo "Component ${c} not found, skipping"
+          done
+
+      - name: Open Weblate sync PR for review
+        if: always()
+        env:
+          # workflow_dispatch 的 component 输入可能包含任意字符串;在这里传 env,
+          # 不直接展开到 shell 里。Branch 名称也只用受信任的日期源。
+          COMPONENT: ${{ inputs.component }}
+          ALLOWED_COMPONENTS: 'docs-platform docs-ai-agents docs-developers docs-ui docs-integrations-overview'
+        run: |
+          set -euo pipefail
+
+          # 校验可选的 component 参数
+          if [[ -n "${COMPONENT}" ]]; then
+            case " ${ALLOWED_COMPONENTS} " in
+              *" ${COMPONENT} "*) ;;
+              *)
+                echo "::error::Unknown Weblate component: ${COMPONENT}"
+                exit 1
+                ;;
+            esac
+          fi
+
+          git fetch origin || true
+          WEBLATE_BRANCH="weblate-airbyte-docs"
+
+          if ! git rev-parse --verify "origin/${WEBLATE_BRANCH}" >/dev/null 2>&1; then
+            echo "No pending Weblate changes; nothing to do."
+            exit 0
+          fi
+
+          # 把 weblate 分支 rebase 到 master 当前头之上,然后推到一个评审专用分支
+          # 上,再用 gh 打开 PR。这样 CODEOWNERS(见 .github/CODEOWNERS I18N 段)
+          # 会强制要求 Locale Lead 在合并前审一遍,符合 docs/contributing-to-airbyte
+          # /i18n-team.md 的 RACI 矩阵(Locale Lead 一级 review + i18n Owner 二级
+          # review)。原 cron 仍然每小时跑一次;只是 merge target 从 master 换到 PR。
+          TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
+          STAGING_BRANCH="i18n/sync-${TIMESTAMP}"
+          PR_TITLE="chore(i18n): Weblate translations sync ${TIMESTAMP}"
+          PR_BODY=$'🤖 Auto-opened by `i18n-sync` workflow.\n\nThis PR brings the latest translations from the `weblate-airbyte-docs` branch.\n\nRequired reviewers per [RACI matrix](../../docs/contributing-to-airbyte/i18n-team.md):\n- `@airbyte/i18n-owners` (Owner)\n- Per-locale lead (zh-Hans / ja / pt-BR depending on changed files)\n\ncc: `area/i18n` label applied automatically.'
+
+          git checkout -B "${STAGING_BRANCH}" "origin/${WEBLATE_BRANCH}"
+          if git merge --ff-only origin/master; then
+            : # weblate 分支已经包含 master 头,无需额外操作
+          else
+            git merge --no-ff origin/master -m "chore(i18n): merge master into Weblate sync branch"
+          fi
+
+          git push origin "HEAD:${STAGING_BRANCH}"
+
+          # 如果同时间戳的 PR 已经存在(重复 cron 触发),不要重复开
+          if gh pr list --base master --state open --search "Weblate translations sync ${TIMESTAMP} in:title" --json number | grep -q '"number"'; then
+            echo "PR for ${TIMESTAMP} already exists; skipping PR creation."
+            exit 0
+          fi
+
+          gh pr create \
+            --base master \
+            --head "${STAGING_BRANCH}" \
+            --title "${PR_TITLE}" \
+            --body "${PR_BODY}" \
+            --label "area/i18n"
+
+          echo "PR opened. Master is no longer auto-merged — review gate enforced via CODEOWNERS."
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@70cd7be8e40a46e8b0eced40b0de447bdb42f68e # v1.26.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.I18N_SYNC_SLACK_WEBHOOK }}
+        with:
+          payload: |
+            {
+              "channel": "#i18n-updates",
+              "username": "Airbyte i18n Bot",
+              "text": "🌐 i18n sync from Weblate: ${{ job.status }}\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }

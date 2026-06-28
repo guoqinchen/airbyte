@@ -113,7 +113,29 @@ const config: Config = {
   ],
   i18n: {
     defaultLocale: "en",
-    locales: ["en"],
+    locales: ["en", "zh-Hans", "ja", "pt-BR"],
+    localeConfigs: {
+      en: {
+        label: "English",
+        direction: "ltr",
+        htmlLang: "en-US",
+      },
+      "zh-Hans": {
+        label: "简体中文",
+        direction: "ltr",
+        htmlLang: "zh-CN",
+      },
+      ja: {
+        label: "日本語",
+        direction: "ltr",
+        htmlLang: "ja-JP",
+      },
+      "pt-BR": {
+        label: "Português (Brasil)",
+        direction: "ltr",
+        htmlLang: "pt-BR",
+      },
+    },
   },
   // The preset is the "main" docs instance, though in reality, most content does not live under this preset. See the plugins array below, which defines the behavior of each docs instance.
   presets: [
@@ -374,6 +396,24 @@ const config: Config = {
       appId: "OYKDBC51MU",
       apiKey: "15c487fd9f7722282efd8fcb76746fce",
       indexName: "airbyte",
+      contextualSearch: true,
+      searchParameters: {},
+      // Multi-language indices: each locale uses a dedicated index.
+      // See https://docusaurus.io/docs/api/themes/configuration#algolia-options
+      // and docs/contributing-to-airbyte/i18n-glossary.md
+      // To add a new locale, append `airbyte_<locale>` index name in Algolia dashboard
+      // and update the mapping below.
+      translations: {
+        "zh-Hans": {
+          indexName: "airbyte_zh-Hans",
+        },
+        ja: {
+          indexName: "airbyte_ja",
+        },
+        "pt-BR": {
+          indexName: "airbyte_pt-BR",
+        },
+      } as Record<string, { indexName: string }>,
     },
     announcementBar: {
       id: "try_airbyte_agents",

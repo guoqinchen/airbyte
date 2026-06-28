@@ -1,0 +1,103 @@
+# Vale Accept List - Português (Brasil) Lista de Termos Aceitos
+
+Airbyte
+Airbyte Agents
+Airbyte Cloud
+Airbyte Enterprise
+PyAirbyte
+Stripe
+Postgres
+PostgreSQL
+Snowflake
+BigQuery
+Databricks
+dbt
+GitHub
+Vercel
+
+# Termos técnicos (não traduzir)
+API
+SDK
+CLI
+UI
+HTTP
+HTTPS
+SSL
+TLS
+YAML
+JSON
+SQL
+CSV
+XML
+AWS
+GCP
+Azure
+Docker
+Kubernetes
+Helm
+Jira
+Slack
+GitLab
+AI
+ML
+NLP
+IDE
+MCP
+RAG
+OAuth
+JWT
+SAML
+SSO
+SCIM
+REST
+GraphQL
+gRPC
+Markdown
+MDX
+ELT
+ETL
+SSR
+SSG
+CDN
+DNS
+
+# Componentes do produto
+Source
+Destination
+Connector
+Stream
+Sync
+Connection
+Catalog
+Field
+Record
+Full Refresh
+Incremental
+Append
+Overwrite
+Cursor
+Primary Key
+CDC
+WebSocket
+Webhook
+
+# Frameworks / linguagens
+Debezium
+Log4j
+Micronaut
+Picocli
+JDBC
+JVM
+OpenJDK
+Kotlin
+Java
+Python
+Gradle
+Maven
+npm
+pnpm
+node
+React
+Docusaurus
+Vercel
+TypeScript

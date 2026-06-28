@@ -1,0 +1,89 @@
+# Weblate 自托管实例 - Airbyte i18n 翻译管理
+#
+# 部署命令:
+#   cp .env.example .env  # 然后填入实际密钥
+#   docker compose up -d
+#   docker compose run --rm weblate weblate migrate
+#   docker compose run --rm weblate weblate createsuperuser
+#
+# 访问:http://localhost:8080
+#
+# 文档:https://docs.weblate.org/en/latest/admin/install/docker.html
+
+services:
+  weblate:
+    image: weblate/weblate:5.6.2
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - database
+      - cache
+    environment:
+      # 数据库
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: weblate
+      POSTGRES_USER: weblate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 1
+      # Memcached
+      MEMCACHED_HOST: cache
+      MEMCACHED_PORT: 11211
+      # 站点配置
+      WEBLATE_EMAIL_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      WEBLATE_EMAIL_HOST_USER: ${SMTP_USER}
+      WEBLATE_EMAIL_HOST_PASSWORD: ${SMTP_PASSWORD}
+      WEBLATE_EMAIL_USE_TLS: 1
+      WEBLATE_EMAIL_USE_VERIFICATION: 1
+      WEBLATE_SERVER_EMAIL: noreply@airbyte.io
+      WEBLATE_DEFAULT_FROM_EMAIL: noreply@airbyte.io
+      WEBLATE_SITE_DOMAIN: ${WEBLATE_SITE_DOMAIN:-weblate.airbyte.internal}
+      WEBLATE_ADMIN_EMAIL: ${WEBLATE_ADMIN_EMAIL:-i18n-owner@airbyte.io}
+      WEBLATE_ADMIN_NAME: ${WEBLATE_ADMIN_NAME:-Airbyte i18n Owner}
+      WEBLATE_ADMIN_PASSWORD: ${WEBLATE_ADMIN_PASSWORD:?WEBLATE_ADMIN_PASSWORD required}
+      # GitHub 集成
+      WEBLATE_GITHUB_USERNAME: ${GITHUB_BOT_USER:-airbyte-i18n-bot}
+      WEBLATE_GITHUB_TOKEN: ${GITHUB_BOT_TOKEN:?GITHUB_BOT_TOKEN required}
+      WEBLATE_GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET required}
+      # 安全
+      WEBLATE_SECRET_KEY: ${WEBLATE_SECRET_KEY:?WEBLATE_SECRET_KEY required}
+      WEBLATE_ALLOWED_HOSTS: ${WEBLATE_ALLOWED_HOSTS:-*}
+      # i18n 项目配置
+      WEBLATE_ENABLE_HTTPS: ${WEBLATE_ENABLE_HTTPS:-0}
+      WEBLATE_REQUIRE_LOGIN: 1
+    volumes:
+      - weblate-data:/app/data
+      - weblate-cache:/app/cache
+    ports:
+      - "8080:8080"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  database:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: weblate
+      POSTGRES_USER: weblate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  cache:
+    image: memcached:1.6-alpine
+    restart: unless-stopped
+    command: ["-m", "256"]
+
+volumes:
+  weblate-data:
+  weblate-cache:
+  redis-data:
+  postgres-data:

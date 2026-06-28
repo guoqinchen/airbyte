@@ -1,0 +1,11 @@
+# Vale Style: airbyte-pt-BR Regras de Pontuação
+# Regras para pontuação em Português Brasileiro
+
+extends: existence
+message: "Use ponto final nas frases em Português."
+level: error
+nonword: true
+tokens:
+  - '\,$'
+
+# Observação: suporte do Vale para PT-BR é limitado; revisão humana é necessária.

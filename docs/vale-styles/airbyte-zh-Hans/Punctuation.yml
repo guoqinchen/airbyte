@@ -1,0 +1,18 @@
+# Vale Style: airbyte-zh-Hans 标点规则
+#
+# 简体中文文档标点规范:
+# - 使用全角中文标点
+# - 中英文混排时,中文段使用中文标点
+# - 数字与英文之间空格分隔
+# - 标题不使用句号
+
+extends: existence
+message: "中文句子应以句号「。」结尾"
+level: error
+nonword: true
+tokens:
+  - '\?$'
+  - '!$'
+  - ',$'
+
+# Note: 此规则仅作示例,Vale 中文支持有限,实际项目主要依赖人工 review + 风格指南。
