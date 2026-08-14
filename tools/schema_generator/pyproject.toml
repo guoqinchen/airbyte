@@ -24,7 +24,7 @@ airbyte-cdk = ">=6.0.0, <7.0.0"
 genson = "< 2"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8"
+pytest = ">=8,<10"
 
 [tool.poetry.scripts]
 schema_generator = "schema_generator.main:main"
